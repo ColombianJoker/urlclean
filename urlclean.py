@@ -45,10 +45,8 @@ class URLCleanerApp(rumps.App):
         super(URLCleanerApp, self).__init__(name="Clean")
         self.title = "🫧"
 
-        # Build the initial menu
         self.menu = ["Clean Clipboard URL"]
 
-        # Read the configuration to build dynamic extensions
         self.config = parse_config_file()
         self.extensions_map = {}
         self.build_dynamic_menus()
@@ -57,13 +55,15 @@ class URLCleanerApp(rumps.App):
         """Finds EXT_MENU keys in config and generates menu items for them."""
         extensions = []
 
-        # 1. Identify all menus and their corresponding indices
         for key, title in self.config.items():
             match = re.match(r"EXT_MENU(\d+)", key)
             if match:
                 idx = match.group(1)
 
                 cmd = self.config.get(f"EXT_COMMAND{idx}")
+                # Fetch custom placeholder, default to "{}" if not provided
+                placeholder = self.config.get(f"EXT_REPLACEMENT{idx}", "{}")
+
                 regex_exp = self.config.get(f"EXT_EXP{idx}")
                 regex_rep = self.config.get(f"EXT_REP{idx}")
 
@@ -74,6 +74,7 @@ class URLCleanerApp(rumps.App):
                             "title": title,
                             "type": "command",
                             "command": cmd,
+                            "placeholder": placeholder,
                         }
                     )
                 elif regex_exp is not None and regex_rep is not None:
@@ -87,15 +88,12 @@ class URLCleanerApp(rumps.App):
                         }
                     )
 
-        # 2. Sort them by their index number
         extensions.sort(key=lambda x: x["idx"])
 
-        # 3. Add to rumps menu and map them for the callback handler
         if extensions:
             self.menu.add(rumps.separator)
             for ext in extensions:
                 self.extensions_map[ext["title"]] = ext
-                # rumps allows assigning a callback directly to a new MenuItem
                 item = rumps.MenuItem(ext["title"], callback=self.handle_extension)
                 self.menu.add(item)
 
@@ -112,8 +110,6 @@ class URLCleanerApp(rumps.App):
         process.communicate(input=text.encode("utf-8"))
 
     def resolve_sound_path(self):
-        """Determines the sound file path dynamically so it updates without restart."""
-        # Re-read config just for sound so it can be changed without restarting app
         live_config = parse_config_file()
         sound_setting = live_config.get("SOUND_FILE")
 
@@ -182,12 +178,12 @@ class URLCleanerApp(rumps.App):
         try:
             if ext["type"] == "command":
                 cmd = ext["command"]
+                placeholder = ext["placeholder"]
 
-                # Check if it uses the {} insertion pattern
-                if "{}" in cmd:
-                    # shlex.quote ensures arbitrary clipboard text doesn't cause shell injection
+                # Use the custom placeholder for replacement
+                if placeholder in cmd:
                     safe_content = shlex.quote(content)
-                    final_cmd = cmd.replace("{}", safe_content)
+                    final_cmd = cmd.replace(placeholder, safe_content)
                     proc = subprocess.run(
                         final_cmd, capture_output=True, text=True, shell=True
                     )
@@ -200,17 +196,13 @@ class URLCleanerApp(rumps.App):
                     result = proc.stdout
 
             elif ext["type"] == "regex":
-                # Apply Regex replacement
                 result = re.sub(ext["exp"], ext["rep"], content)
 
         except Exception as e:
             rumps.notification("Extension Error", sender.title, str(e))
             return
 
-        # If a valid result was generated and it actually changed the text
         if result is not None and result != content:
-            # Subprocess commands often add a trailing newline; we usually want to strip it
-            # if the original clipboard didn't have one.
             if not content.endswith("\n") and result.endswith("\n"):
                 result = result[:-1]
 
