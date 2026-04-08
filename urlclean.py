@@ -60,14 +60,28 @@ class URLCleanerApp(rumps.App):
             if match:
                 idx = match.group(1)
 
+                # Fetch possible command types
                 cmd = self.config.get(f"EXT_COMMAND{idx}")
-                # Fetch custom placeholder, default to "{}" if not provided
-                placeholder = self.config.get(f"EXT_REPLACEMENT{idx}", "{}")
+                e_cmd = self.config.get(f"EXT_ECOMMAND{idx}")
 
+                # Regex fields
                 regex_exp = self.config.get(f"EXT_EXP{idx}")
                 regex_rep = self.config.get(f"EXT_REP{idx}")
 
-                if cmd:
+                # Shared placeholder logic
+                placeholder = self.config.get(f"EXT_REPLACEMENT{idx}", "{}")
+
+                # Priority logic: ECOMMAND -> COMMAND -> REGEX
+                if e_cmd:
+                    extensions.append(
+                        {
+                            "idx": int(idx),
+                            "title": title,
+                            "type": "ecommand",
+                            "command": e_cmd,
+                        }
+                    )
+                elif cmd:
                     extensions.append(
                         {
                             "idx": int(idx),
@@ -88,6 +102,7 @@ class URLCleanerApp(rumps.App):
                         }
                     )
 
+        # Sort by the index (EXT_MENU1, EXT_MENU2, etc.)
         extensions.sort(key=lambda x: x["idx"])
 
         if extensions:
@@ -167,21 +182,32 @@ class URLCleanerApp(rumps.App):
         if not ext:
             return
 
-        content = self.get_clipboard()
-        if not content:
-            rumps.notification(
-                "Extension App", "Empty Clipboard", "Nothing to process."
-            )
-            return
+        # We only need 'content' if it's NOT an ecommand
+        content = ""
+        if ext["type"] != "ecommand":
+            content = self.get_clipboard()
+            if not content:
+                rumps.notification(
+                    "Extension App", "Empty Clipboard", "Nothing to process."
+                )
+                return
 
         result = None
         try:
-            if ext["type"] == "command":
+            # TYPE 1: Generator Command (No Input)
+            if ext["type"] == "ecommand":
+                proc = subprocess.run(
+                    ext["command"], capture_output=True, text=True, shell=True
+                )
+                result = proc.stdout
+
+            # TYPE 2: Standard Command (With Input)
+            elif ext["type"] == "command":
                 cmd = ext["command"]
                 placeholder = ext["placeholder"]
 
-                # Use the custom placeholder for replacement
                 if placeholder in cmd:
+                    # Replace placeholder with shell-quoted clipboard content
                     safe_content = shlex.quote(content)
                     final_cmd = cmd.replace(placeholder, safe_content)
                     proc = subprocess.run(
@@ -189,12 +215,13 @@ class URLCleanerApp(rumps.App):
                     )
                     result = proc.stdout
                 else:
-                    # Stdin -> Stdout pattern
+                    # Classic Stdin -> Stdout pattern
                     proc = subprocess.run(
                         cmd, input=content, capture_output=True, text=True, shell=True
                     )
                     result = proc.stdout
 
+            # TYPE 3: Regex Substitution
             elif ext["type"] == "regex":
                 result = re.sub(ext["exp"], ext["rep"], content)
 
@@ -202,7 +229,9 @@ class URLCleanerApp(rumps.App):
             rumps.notification("Extension Error", sender.title, str(e))
             return
 
-        if result is not None and result != content:
+        # Clean up and update clipboard
+        if result is not None:
+            # Strip trailing newline only if it wasn't in the original content
             if not content.endswith("\n") and result.endswith("\n"):
                 result = result[:-1]
 

@@ -211,6 +211,8 @@ __marimo__/
 
 # Environments
 .venv/
+.python-version
+uv.lock
 
 # Build and Distribution artifacts
 build/
