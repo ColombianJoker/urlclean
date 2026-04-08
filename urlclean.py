@@ -23,7 +23,8 @@ def parse_config_file():
     if not os.path.exists(CONFIG_PATH):
         return config
     try:
-        with open(CONFIG_PATH, "r") as f:
+        # Added encoding="utf-8" here
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
@@ -59,19 +60,12 @@ class URLCleanerApp(rumps.App):
             match = re.match(r"EXT_MENU(\d+)", key)
             if match:
                 idx = match.group(1)
-
-                # Fetch possible command types
                 cmd = self.config.get(f"EXT_COMMAND{idx}")
                 e_cmd = self.config.get(f"EXT_ECOMMAND{idx}")
-
-                # Regex fields
                 regex_exp = self.config.get(f"EXT_EXP{idx}")
                 regex_rep = self.config.get(f"EXT_REP{idx}")
-
-                # Shared placeholder logic
                 placeholder = self.config.get(f"EXT_REPLACEMENT{idx}", "{}")
 
-                # Priority logic: ECOMMAND -> COMMAND -> REGEX
                 if e_cmd:
                     extensions.append(
                         {
@@ -102,15 +96,15 @@ class URLCleanerApp(rumps.App):
                         }
                     )
 
-        # Sort by the index (EXT_MENU1, EXT_MENU2, etc.)
         extensions.sort(key=lambda x: x["idx"])
 
         if extensions:
             self.menu.add(rumps.separator)
             for ext in extensions:
                 self.extensions_map[ext["title"]] = ext
-                item = rumps.MenuItem(ext["title"], callback=self.handle_extension)
-                self.menu.add(item)
+                self.menu.add(
+                    rumps.MenuItem(ext["title"], callback=self.handle_extension)
+                )
 
     def get_clipboard(self):
         try:
@@ -182,7 +176,6 @@ class URLCleanerApp(rumps.App):
         if not ext:
             return
 
-        # We only need 'content' if it's NOT an ecommand
         content = ""
         if ext["type"] != "ecommand":
             content = self.get_clipboard()
@@ -194,47 +187,37 @@ class URLCleanerApp(rumps.App):
 
         result = None
         try:
-            # TYPE 1: Generator Command (No Input)
             if ext["type"] == "ecommand":
                 proc = subprocess.run(
                     ext["command"], capture_output=True, text=True, shell=True
                 )
                 result = proc.stdout
-
-            # TYPE 2: Standard Command (With Input)
             elif ext["type"] == "command":
-                cmd = ext["command"]
-                placeholder = ext["placeholder"]
-
-                if placeholder in cmd:
-                    # Replace placeholder with shell-quoted clipboard content
-                    safe_content = shlex.quote(content)
-                    final_cmd = cmd.replace(placeholder, safe_content)
+                if ext["placeholder"] in ext["command"]:
+                    final_cmd = ext["command"].replace(
+                        ext["placeholder"], shlex.quote(content)
+                    )
                     proc = subprocess.run(
                         final_cmd, capture_output=True, text=True, shell=True
                     )
-                    result = proc.stdout
                 else:
-                    # Classic Stdin -> Stdout pattern
                     proc = subprocess.run(
-                        cmd, input=content, capture_output=True, text=True, shell=True
+                        ext["command"],
+                        input=content,
+                        capture_output=True,
+                        text=True,
+                        shell=True,
                     )
-                    result = proc.stdout
-
-            # TYPE 3: Regex Substitution
+                result = proc.stdout
             elif ext["type"] == "regex":
                 result = re.sub(ext["exp"], ext["rep"], content)
-
         except Exception as e:
             rumps.notification("Extension Error", sender.title, str(e))
             return
 
-        # Clean up and update clipboard
         if result is not None:
-            # Strip trailing newline only if it wasn't in the original content
             if not content.endswith("\n") and result.endswith("\n"):
                 result = result[:-1]
-
             self.set_clipboard(result)
             self.play_notification_sound()
 
